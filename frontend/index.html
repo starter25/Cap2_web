@@ -1,0 +1,433 @@
+<!doctype html>
+<!--
+  ============================================================================
+  Stress Detection Web Viz — 리디자인 (원본 3-파일 구조 유지)
+  ----------------------------------------------------------------------------
+  [이번 변경의 원칙]
+  - app.js 는 "한 줄도" 바꾸지 않았습니다. (static/app.js = 원본 그대로)
+    → API 경로(/api/state, /api/*/toggle, /api/exit), 필드명, 차트 바인딩 모두 불변.
+  - 화면을 첨부 레퍼런스(그라데이션 + 글래스 + 표정 마스코트)로 바꾸기 위한 작업은
+    전부 (1) 이 index.html 의 마크업 + (2) static/styles.css 에만 했습니다.
+  - 추가/교체한 부분에는 모두 [추가] / [교체] 주석을 달았습니다.
+
+  [app.js 를 그대로 쓰기 위한 핵심 장치]
+  1) app.js 가 textContent 를 쓰는 "원본 id" 들을 전부 유지했습니다.
+     - 화면에 보이는 것: device-connected / signal-quality / measurement-state /
+       measurement-time / 버튼 3개 / 차트 div 4개
+     - 화면에 안 보이는 것: status-text, fusion-text, eeg/ecg-final, eeg/ecg-score,
+       heart-rate, ecg-rule, normal/stress-samples, sampling-rate, haptic-status
+       → 아래 .legacy-sync(시각적으로 숨김) 블록에 보존. app.js 가 갱신하면
+         "추가 시각화 스크립트"가 이 값을 읽어 마스코트/지수/진행바로 반영합니다.
+  2) 차트는 원본대로 app.js 가 Plotly 로 chart-eeg1/eeg2/ecg/score div 에 그립니다.
+     (그래서 Plotly CDN 도 원본처럼 유지)
+
+  [백엔드 없이 미리보기]
+  - app.js 의 /api/state 폴링이 실패하면(=정적 미리보기), 아래 "오프라인 목 쉼"이
+    백엔드 모양과 동일한 가짜 state 를 만들어 app.js 의 window.updateUi() 를 그대로
+    호출합니다. → app.js 수정 없이도 차트/지수/마스코트가 살아 움직입니다.
+  ============================================================================
+-->
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>스트레스 측정</title>
+
+    <!-- [추가] Pretendard (오프라인이면 시스템 한글 폰트로 폴백) -->
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css"
+    />
+
+    <!-- [원본 유지] 디자인 스타일시트 + Plotly (app.js 가 Plotly 로 차트를 그림) -->
+    <link rel="stylesheet" href="static/styles.css" />
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  </head>
+
+  <body>
+    <!-- [추가] 스파클 레이어(아래 스크립트가 별을 채움) -->
+    <div id="sparkles"></div>
+
+    <!-- [추가] 고정 캔버스 — fitStage 가 폭에 맞춰 scale, 넘치면 세로 스크롤.
+         stage-wrap 이 스케일된 실제 크기를 차지해 스크롤 영역이 정확히 잡힘. -->
+    <div class="stage-wrap" id="stage-wrap">
+    <div class="stage" id="stage">
+      <!-- ===================== [추가] 상단 상태 스트립 ===================== -->
+      <!-- value 칸의 id 는 모두 원본 app.js 가 갱신하던 그대로입니다. -->
+      <header class="topbar glass">
+        <div class="status-item">
+          <span class="icon sensor" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12.5a10 10 0 0 1 14 0" /><path d="M8.5 16a5 5 0 0 1 7 0" /><circle cx="12" cy="19" r="0.6" fill="currentColor" stroke="none" />
+            </svg>
+          </span>
+          <div>
+            <div class="label">센서 연결</div>
+            <!-- [원본 id 유지] app.js: deviceConnectedText -->
+            <div class="value" id="device-connected">-</div>
+          </div>
+        </div>
+
+        <div class="status-item">
+          <span class="icon signal" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 12h3l2.5-6 4 13 2.5-7H21" />
+            </svg>
+          </span>
+          <div>
+            <div class="label">신호 품질</div>
+            <!-- [원본 id 유지] app.js: signalQualityText -->
+            <div class="value" id="signal-quality">-</div>
+          </div>
+        </div>
+
+        <div class="status-item">
+          <span class="icon state" aria-hidden="true">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" />
+            </svg>
+          </span>
+          <div>
+            <div class="label">측정 상태</div>
+            <!-- [원본 id 유지] app.js: measurementStateText -->
+            <div class="value" id="measurement-state">-</div>
+          </div>
+        </div>
+
+        <div class="spacer"></div>
+
+        <div class="clock">
+          <div class="label">측정 시간</div>
+          <div class="value">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" />
+            </svg>
+            <!-- [원본 id 유지] app.js: measurementTimeText -->
+            <span id="measurement-time">00:00</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- ===================== [추가] 본문 2단 ===================== -->
+      <main class="main">
+        <!-- ----- 좌측: 마스코트 + 지수 + 베이스라인 ----- -->
+        <section class="left">
+          <div class="hero">
+            <!-- [추가] 표정 마스코트(상태색은 시각화 스크립트가 갱신) -->
+            <div class="mascot-wrap idle" id="mascot">
+              <div class="mascot">
+                <span class="eye left"></span>
+                <span class="eye right"></span>
+                <span class="cheek left"></span>
+                <span class="cheek right"></span>
+                <span class="mouth"></span>
+              </div>
+            </div>
+
+            <!-- [추가] 상태 pill / 큰 지수 / 캡션 (시각화 스크립트가 갱신) -->
+            <div class="state-pill" id="state-pill">대기</div>
+            <div class="score-big"><span id="score-num">--</span><span class="pct">%</span></div>
+            <div class="score-caption">스트레스 지수</div>
+          </div>
+
+          <!-- [추가] 베이스라인 카드 2개
+               (원본의 "Normal/Stress Samples: N" 텍스트를 읽어 진행바로 시각화) -->
+          <div class="baselines">
+            <div class="baseline-card normal" id="card-normal">
+              <div class="baseline-head">
+                <span class="b-icon" style="color: var(--normal-green)">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M20 4S8 3 5 11c-1.6 4.3 1 7.5 1 7.5S4.5 12 9 9c-2 3-2 6-2 6s9 1 12-7c.7-1.9 1-4 1-4z" /></svg>
+                </span>
+                <span class="baseline-title">평상시 기준값 (Normal)</span>
+                <span class="check" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7" /></svg>
+                </span>
+              </div>
+              <div class="baseline-sub" id="normal-sub">대기 중</div>
+              <div class="progress"><span id="normal-bar"></span></div>
+              <div class="progress-label"><span id="normal-pct">0</span> %</div>
+            </div>
+
+            <div class="baseline-card stress" id="card-stress">
+              <div class="baseline-head">
+                <span class="b-icon" style="color: var(--stress-orange)">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z" /></svg>
+                </span>
+                <span class="baseline-title">스트레스 기준값 (Stress)</span>
+                <span class="check" aria-hidden="true">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7" /></svg>
+                </span>
+              </div>
+              <div class="baseline-sub" id="stress-sub">대기 중</div>
+              <div class="progress"><span id="stress-bar"></span></div>
+              <div class="progress-label"><span id="stress-pct">0</span> %</div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ----- 우측: 라이브 패널 (다크 글래스 + Plotly 차트 4개) ----- -->
+        <!-- 차트 div 들의 id 는 원본 그대로 — app.js 가 Plotly 로 직접 그립니다. -->
+        <section class="right">
+          <div class="live-panel glass">
+            <div class="live-head"><span class="live-dot"></span> LIVE</div>
+            <div class="charts">
+              <div class="chart-block signal">
+                <div class="c-title">EEG (뇌파 1)</div>
+                <div class="chart-card"><div id="chart-eeg1" class="chart"></div></div>
+              </div>
+              <div class="chart-block signal">
+                <div class="c-title">EEG (뇌파 2)</div>
+                <div class="chart-card"><div id="chart-eeg2" class="chart"></div></div>
+              </div>
+              <div class="chart-block signal">
+                <div class="c-title">ECG (심전도)</div>
+                <div class="chart-card"><div id="chart-ecg" class="chart"></div></div>
+              </div>
+              <div class="chart-block score">
+                <div class="c-title">EEG / ECG Stress Score</div>
+                <div class="chart-card"><div id="chart-score" class="chart"></div></div>
+              </div>
+            </div>
+            <div class="live-foot">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9.5" /><path d="M12 11v5" stroke-linecap="round" /><circle cx="12" cy="7.6" r="0.4" fill="currentColor" /></svg>
+              안정된 자세를 유지하면 더 정확한 측정이 가능합니다.
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <!-- ===================== [교체] 하단 버튼 ===================== -->
+      <!-- 원본 세로 사이드바 버튼 → 가로 3분할. id/클릭 동작은 app.js 가 그대로 처리.
+           라벨 텍스트는 app.js 가 backend(ui.*) 값으로 덮어씁니다(오프라인은 목이 한글로 채움). -->
+      <footer class="actions">
+        <button class="btn" id="normal-btn">평상시 기준값 측정</button>
+        <button class="btn" id="stress-btn">스트레스 기준값 측정</button>
+        <button class="btn danger" id="exit-btn">종료</button>
+      </footer>
+    </div>
+    </div>
+
+    <!-- =====================================================================
+         [추가] app.js 호환용 히든 노드
+         app.js 의 updateUi() 가 textContent 를 쓰는 원본 요소들.
+         새 디자인엔 안 보이지만, 없으면 app.js 가 null 참조로 멈추므로 보존.
+         (status/fusion/eeg-ecg final, score, heart-rate 등은 추가 시각화에 재활용)
+         ===================================================================== -->
+    <div class="legacy-sync" aria-hidden="true">
+      <span id="status-text"></span>
+      <span id="fusion-text"></span>
+      <span id="eeg-final-text"></span>
+      <span id="ecg-final-text"></span>
+      <span id="eeg-score">-</span>
+      <span id="ecg-score">-</span>
+      <span id="heart-rate">-</span>
+      <span id="ecg-rule">-</span>
+      <span id="normal-samples">Normal Samples: 0</span>
+      <span id="stress-samples">Stress Samples: 0</span>
+      <span id="sampling-rate">Sampling Rate: -</span>
+      <span id="haptic-status">-</span>
+    </div>
+
+    <!-- =====================================================================
+         [원본 유지] 데이터 엔진 — static/app.js (수정 금지)
+         이 스크립트가 /api/state 폴링 + 모든 원본 id 갱신 + Plotly 차트를 담당.
+         반드시 아래 "추가" 스크립트들보다 먼저 로드되어 window.updateUi 를 전역에 노출.
+         ===================================================================== -->
+    <script src="static/app.js"></script>
+
+    <!-- =====================================================================
+         [추가] 1) fitStage(고정 캔버스 스케일) + 스파클
+         ===================================================================== -->
+    <script>
+      (function () {
+        var stage = document.getElementById("stage");
+        var wrap = document.getElementById("stage-wrap");
+        var BASE_W = 1200;
+        // [변경] 폭에 맞춰 스케일(최대 1배). wrap 은 "스케일된 실제 높이"로
+        // 맞춰 세로가 넘치면 페이지가 자연스럽게 스크롤되게 함.
+        function fitStage() {
+          var s = Math.min(window.innerWidth / BASE_W, 1);
+          stage.style.transform = "scale(" + s + ")";
+          wrap.style.width = (BASE_W * s) + "px";
+          wrap.style.height = (stage.offsetHeight * s) + "px";
+        }
+        window.addEventListener("resize", fitStage);
+        // 내용 높이가 바뀌면(차트/폰트 로딩 등) wrap 도 같이 갱신
+        if (window.ResizeObserver) { new ResizeObserver(fitStage).observe(stage); }
+        fitStage();
+        if (document.fonts && document.fonts.ready) document.fonts.ready.then(fitStage);
+
+        // [추가] Plotly 차트를 컨테이너(명시 높이)에 강제로 맞춤 — app.js 는 안 건드림
+        function resizeCharts() {
+          if (!window.Plotly) return;
+          ["chart-eeg1", "chart-eeg2", "chart-ecg", "chart-score"].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el && el._fullLayout) { try { window.Plotly.Plots.resize(el); } catch (e) {} }
+          });
+        }
+        window.addEventListener("resize", resizeCharts);
+        setInterval(resizeCharts, 1500);
+
+        // 스파클 흩뿌리기
+        var layer = document.getElementById("sparkles");
+        for (var i = 0; i < 16; i++) {
+          var sp = document.createElement("div");
+          sp.className = "sparkle";
+          var size = 6 + Math.random() * 12;
+          sp.style.width = size + "px";
+          sp.style.height = size + "px";
+          sp.style.left = Math.random() * 100 + "vw";
+          sp.style.top = Math.random() * 100 + "vh";
+          sp.style.setProperty("--dur", (2.6 + Math.random() * 2.6) + "s");
+          sp.style.setProperty("--delay", (-Math.random() * 4) + "s");
+          layer.appendChild(sp);
+        }
+      })();
+    </script>
+
+    <!-- =====================================================================
+         [추가] 2) 오프라인 목 쉼(shim)
+         백엔드가 없으면(/api/state 실패) backend get_state() 와 "같은 모양"의 가짜
+         state 를 만들어 app.js 의 전역 updateUi() 를 그대로 호출 → app.js 수정 없이
+         차트/지수/마스코트가 살아 움직임. 백엔드가 있으면 이 쉼은 아무것도 안 함.
+         ===================================================================== -->
+    <script>
+      (function () {
+        "use strict";
+        var RAW_LEN = 220, SCORE_LEN = 170, TARGET = 2600;
+        var THRESHOLDS = { baseline: 33, stress: 60, reject: 82 };
+        // 레퍼런스와 동일하게: 두 기준값 측정 완료 + 실시간 측정 중 + 지수≈58%
+        var m = {
+          detecting: true, normalReady: true, stressReady: true,
+          normalSamples: TARGET, stressSamples: TARGET,
+          startedAt: Date.now() - 156 * 1000,
+          eeg: 68, ecg: 48, t: 0, ecgPhase: 0,
+          rawEeg1: [], rawEeg2: [], rawEcg: [], eegSeries: [], ecgSeries: [],
+        };
+        var clamp = function (v) { return Math.max(0, Math.min(100, v)); };
+        function eeg1(t){return Math.sin(t*1.7)*0.6+Math.sin(t*4.3+1.1)*0.35+Math.sin(t*9.1)*0.18+(Math.random()-0.5)*0.5;}
+        function eeg2(t){return Math.sin(t*6.2)*0.5+Math.sin(t*13.7+0.5)*0.3+(Math.random()-0.5)*0.9;}
+        function ecg(){m.ecgPhase+=0.085;var b=m.ecgPhase%(Math.PI*2);var v=Math.sin(b*0.5)*0.08;v+=Math.exp(-Math.pow((b-0.6)*6,2))-Math.exp(-Math.pow((b-1)*7,2))*0.28+(Math.random()-0.5)*0.05;return v;}
+        for (var i=0;i<RAW_LEN;i++){m.t+=0.18;m.rawEeg1.push(eeg1(m.t));m.rawEeg2.push(eeg2(m.t));m.rawEcg.push(ecg());}
+        for (var j=0;j<SCORE_LEN;j++){var k=j/(SCORE_LEN-1);m.eegSeries.push(clamp(m.eeg-(1-k)*22+(Math.random()-0.5)*2.5));m.ecgSeries.push(clamp(m.ecg-(1-k)*16+(Math.random()-0.5)*2.5));}
+
+        function tick() {
+          for (var i=0;i<3;i++){m.t+=0.18;m.rawEeg1.push(eeg1(m.t));m.rawEeg2.push(eeg2(m.t));m.rawEcg.push(ecg());
+            if(m.rawEeg1.length>RAW_LEN)m.rawEeg1.shift();if(m.rawEeg2.length>RAW_LEN)m.rawEeg2.shift();if(m.rawEcg.length>RAW_LEN)m.rawEcg.shift();}
+          m.eeg+=( (Math.random()<0.01? clamp(m.eeg+(Math.random()-0.5)*24):m.eeg) - m.eeg)*0.04;
+          m.eeg=clamp(m.eeg+(Math.random()-0.5)*1.2); m.ecg=clamp(m.ecg+(Math.random()-0.5)*1.2);
+          m.eegSeries.push(clamp(m.eeg));m.ecgSeries.push(clamp(m.ecg));
+          if(m.eegSeries.length>SCORE_LEN)m.eegSeries.shift();if(m.ecgSeries.length>SCORE_LEN)m.ecgSeries.shift();
+        }
+        // backend get_state() 와 동일 모양 (app.js updateUi 가 읽는 모든 필드 포함)
+        function getState() {
+          var elapsed = Math.max(0, Math.floor((Date.now() - m.startedAt) / 1000));
+          return {
+            status: "MOCK",
+            device: { connected: true, signalQuality: "good", hapticStatus: "HAPTIC_IDLE" },
+            measurement: { stateLabel: "실시간 측정 중", elapsedSec: elapsed },
+            ui: {
+              normalButtonLabel: "평상시 기준값 측정", stressButtonLabel: "스트레스 기준값 측정",
+              normalButtonDisabled: false, stressButtonDisabled: false,
+            },
+            current: {
+              eegFinal: "NORMAL", ecgFinal: "NORMAL", displayState: "normal",
+              eegSmoothedScore: m.eeg, ecgSmoothedScore: m.ecg,
+              heartRate: 72 + Math.round(Math.sin(m.t * 0.1) * 4), ecgRule: "mock", samplingRate: 41.7,
+            },
+            baseline: { normalSamples: m.normalSamples, stressSamples: m.stressSamples },
+            plots: {
+              rawEeg1: m.rawEeg1.slice(), rawEeg2: m.rawEeg2.slice(), rawEcg: m.rawEcg.slice(),
+              eegScore: m.eegSeries.slice(), ecgScore: m.ecgSeries.slice(), thresholds: THRESHOLDS,
+            },
+          };
+        }
+
+        // app.js 의 setInterval(refreshState,400) 과 별개로, 실패 시에만 목으로 그림.
+        setInterval(function () {
+          fetch("/api/state", { cache: "no-store" })
+            .then(function (r) { if (!r.ok) throw 0; /* 온라인: app.js 가 처리 → 아무것도 안 함 */ })
+            .catch(function () {
+              // 오프라인: app.js 의 전역 updateUi 를 그대로 호출(차트/텍스트 모두 app.js 가 그림)
+              if (typeof window.updateUi === "function") { tick(); window.updateUi(getState()); }
+            });
+        }, 400);
+      })();
+    </script>
+
+    <!-- =====================================================================
+         [추가] 3) 시각화 동기화 레이어
+         app.js(온라인) 또는 목 쉼(오프라인) 이 갱신해 둔 "원본 노드"의 값을 읽어서
+         새 디자인 요소(마스코트 표정 / 큰 지수 % / 상태 pill / 베이스라인 진행바 /
+         측정중 강조)로 반영. app.js 는 손대지 않음.
+         ===================================================================== -->
+    <script>
+      (function () {
+        "use strict";
+        var $ = function (id) { return document.getElementById(id); };
+        var mascot = $("mascot"), pill = $("state-pill"), scoreNum = $("score-num");
+        var displayStateText = $("fusion-text");
+        var msState = $("measurement-state");
+        var cardN = $("card-normal"), cardS = $("card-stress");
+        var TARGET = 2000; // 진행바가 가득 차는 기준 표본 수(시각 기준)
+        var STAGES = ["idle", "calm", "normal", "warn", "danger"];
+
+        function visualOfDisplayState(displayState) {
+          switch ((displayState || "").toLowerCase()) {
+            case "normal":
+              return { k: "calm", t: "정상", g: "rgba(79,209,122,0.7)", r: "rgba(79,209,122,0.6)" };
+            case "caution":
+              return { k: "normal", t: "주의", g: "rgba(255,200,120,0.75)", r: "rgba(255,198,120,0.6)" };
+            case "stress":
+              return { k: "warn", t: "스트레스", g: "rgba(245,128,62,0.7)", r: "rgba(245,128,62,0.6)" };
+            case "danger":
+              return { k: "danger", t: "위험", g: "rgba(239,84,102,0.7)", r: "rgba(239,84,102,0.65)" };
+            default:
+              return { k: "idle", t: "대기", g: "rgba(180,180,210,0.6)", r: "rgba(200,200,225,0.6)" };
+          }
+        }
+        var num = function (el) { var v = parseFloat((el && el.textContent) || ""); return Number.isFinite(v) ? v : null; };
+        var samplesOf = function (el) { var mt = ((el && el.textContent) || "").match(/(\d+)/); return mt ? +mt[1] : 0; };
+
+        function syncBaseline(card, sub, bar, pct, samples, label) {
+          var done = samples >= TARGET;
+          var p = done ? 100 : Math.max(0, Math.min(100, Math.round((samples / TARGET) * 100)));
+          card.classList.toggle("done", done);
+          $(sub).textContent = done ? "측정 완료" : (samples > 0 ? "측정 중…" : "대기 중");
+          $(bar).style.width = p + "%";
+          $(pct).textContent = p;
+        }
+
+        function sync() {
+          // 1) 지수 = app.js 가 채운 EEG/ECG 스무딩 점수의 평균
+          var eeg = num($("eeg-score")), ecg = num($("ecg-score"));
+          var headline = null;
+          if (eeg != null && ecg != null) headline = 0.5 * eeg + 0.5 * ecg;
+          else if (eeg != null) headline = eeg;
+          else if (ecg != null) headline = ecg;
+
+          var st = visualOfDisplayState((displayStateText && displayStateText.textContent) || "idle");
+          scoreNum.textContent = headline == null ? "--" : String(Math.round(headline));
+          pill.textContent = st.t;
+          STAGES.forEach(function (c) { mascot.classList.remove(c); });
+          mascot.classList.add(st.k);
+          mascot.style.setProperty("--glow", st.g);
+          mascot.style.setProperty("--ring", st.r);
+          document.documentElement.style.setProperty("--glow", st.g);
+
+          // 2) 측정 상태 텍스트로 "측정 중" 강조 + 버튼 진행 강조
+          var label = (msState.textContent || "");
+          msState.classList.toggle("is-live", /측정\s*중/.test(label));
+          $("normal-btn").classList.toggle("active-normal", /평상시/.test(label) && /측정\s*중/.test(label));
+          $("stress-btn").classList.toggle("active-stress", /스트레스/.test(label) && /측정\s*중/.test(label));
+
+          // 3) 베이스라인 진행바 = app.js 가 채운 "Normal/Stress Samples: N"
+          syncBaseline(cardN, "normal-sub", "normal-bar", "normal-pct", samplesOf($("normal-samples")));
+          syncBaseline(cardS, "stress-sub", "stress-bar", "stress-pct", samplesOf($("stress-samples")));
+        }
+        setInterval(sync, 250);
+        sync();
+      })();
+    </script>
+  </body>
+</html>
