@@ -1,0 +1,17 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# CLAUDE
+CLAUDE.md
+.claude/
+
+# Frontend (Node / Vite)
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+npm-debug.log*
+
+# VSCode
+.vscode/
