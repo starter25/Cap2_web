@@ -62,6 +62,14 @@ UNITY_STRESS_CAUTION = 40
 UNITY_STRESS_STRESS = 60
 UNITY_STRESS_DANGER = 80
 OUTPUT_FLUSH_INTERVAL_ROWS = 100
+# Live inference only ever reads the most recent window of signal, so the
+# signal_eeg1/2/ecg buffers are kept bounded to avoid unbounded memory growth
+# over long sessions. We keep at least this many windows of headroom and trim in
+# batches (down to SIGNAL_BUFFER_KEEP_WINDOWS once SIGNAL_BUFFER_TRIM_WINDOWS is
+# exceeded) so trimming is amortized O(1) per sample and never cuts into the
+# active window.
+SIGNAL_BUFFER_KEEP_WINDOWS = 4
+SIGNAL_BUFFER_TRIM_WINDOWS = 8
 
 
 class FusionWebController:
@@ -687,11 +695,25 @@ class FusionWebController:
         self.current_display_state = resolve_display_state(self.current_eeg_smoothed_score, self.current_ecg_smoothed_score, self.current_ecg_rule_status)
         self._update_haptic_logic()
 
+    def _trim_signal_buffers(self) -> None:
+        # Drop the oldest samples once the buffer grows well past what inference
+        # needs, adjusting the inference cursor by the same amount so detection
+        # behavior is unchanged (the cursor is just "length at last inference").
+        unit = max(self.eeg_window_size, self.ecg_window_size) + self.stride_samples
+        if len(self.signal_eeg1) <= unit * SIGNAL_BUFFER_TRIM_WINDOWS:
+            return
+        excess = len(self.signal_eeg1) - unit * SIGNAL_BUFFER_KEEP_WINDOWS
+        del self.signal_eeg1[:excess]
+        del self.signal_eeg2[:excess]
+        del self.signal_ecg[:excess]
+        self.last_infer_cursor = max(0, self.last_infer_cursor - excess)
+
     def _append_sample(self, eeg1_value: float, eeg2_value: float, ecg_value: float, received_at: str) -> None:
         self.last_sample_received_at = time.time()
         self.signal_eeg1.append(float(eeg1_value))
         self.signal_eeg2.append(float(eeg2_value))
         self.signal_ecg.append(float(ecg_value))
+        self._trim_signal_buffers()
         self.raw_plot_eeg1.append(float(eeg1_value))
         self.raw_plot_eeg2.append(float(eeg2_value))
         self.raw_plot_ecg.append(float(ecg_value))
