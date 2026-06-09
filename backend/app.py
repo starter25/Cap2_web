@@ -4,7 +4,6 @@ import argparse
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
@@ -16,16 +15,13 @@ from web_viz.backend.controller import FusionWebController
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = PROJECT_ROOT / "web_viz" / "frontend"
+# The React frontend is built (vite build) into frontend/dist; that is what we
+# serve in production. Run `npm run build` in web_viz/frontend to (re)generate it.
+DIST_DIR = FRONTEND_DIR / "dist"
 
 app = FastAPI(title="Stress Detection Web Viz")
-app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
 controller: FusionWebController | None = None
-
-
-@app.get("/")
-def index() -> FileResponse:
-    return FileResponse(FRONTEND_DIR / "index.html")
 
 
 @app.get("/api/health")
@@ -74,6 +70,14 @@ def exit_controller() -> dict:
         return {"ok": True, "message": "Controller already stopped"}
     controller.close()
     return {"ok": True, "message": "Controller stopped", "state": controller.get_state()}
+
+
+# Serve the built React SPA last so it only handles routes not claimed by /api.
+# html=True makes "/" return index.html and provides SPA-style fallback.
+if DIST_DIR.exists():
+    app.mount("/", StaticFiles(directory=str(DIST_DIR), html=True), name="spa")
+else:
+    print(f"WARNING: frontend build not found at {DIST_DIR}. Run `npm run build` in web_viz/frontend. Serving API only.")
 
 
 def parse_args() -> argparse.Namespace:
